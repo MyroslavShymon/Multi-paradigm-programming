@@ -1,0 +1,122 @@
+/* 0) Підключення пакета для χ²-розподілу */
+load("distrib")$    /* для функції quantile_chi2(p, df) */
+
+toLinguisticChain():=block(
+  [mode, n, rand_limit, m, df,
+   series, sorted_series, raw_q, bounds, scale,
+   alphabet, letters, chain,
+   i, j, v, prev, up,
+   mat, L, idx_i, idx_j],
+
+  /* 1) Вибір режиму введення:
+        – manual  → користувач вводить дані вручну
+        – random  → дані генеруються випадково */
+  print("Введіть режим (manual/random):"), mode:read(),
+  if not (mode='manual or mode='random) then block(
+    print("Невірний режим!"), return()
+  ),
+
+  /* 2) Зчитування ряду чисел:
+        якщо manual  → просимо n чисел у користувача
+        якщо random  → генеруємо n випадкових значень від 0 до rand_limit-1 */
+  print("Введіть n (кількість елементів):"), n:read(),
+  if mode='manual then
+    series: makelist(
+      block([x],
+        print(sconcat("Value #", i, ": ")),
+        x:read(),   /* зчитуємо одне значення */
+        x
+      ), i, 1, n
+    )
+  else block(
+    print("Введіть верхню межу для random (0..N-1):"), rand_limit:read(),
+    series: makelist(1 + random(rand_limit), i, 1, n),
+    for i:1 thru n do print(sconcat("Rnd[", i, "] = ", series[i]))
+  ),
+
+  /* 3) Введення параметрів алгоритму:
+        – m  : потужність (розмір) алфавіту (кількість інтервалів)
+        – df : ступінь свободи χ²-розподілу */
+  print("Введіть розмір алфавіту m:"), m:truncate(read()),
+  print("Введіть ступінь свободи χ² (df):"), df:read(),
+  if m<1 or m>26 then block(
+    print("m має бути від 1 до 26"), return()
+  ),
+
+  /* 3.1) Формування алфавіту:
+        створюємо список символів ["A","B",…] довжиною m */
+  alphabet: makelist(string(ascii(64 + i)), i, 1, m),
+
+  /* 4) Сортування вхідного ряду за зростанням:
+        щоб легко визначити мінімум, максимум та діапазон */
+  sorted_series: sort(series),
+  print("Sorted series: ", sorted_series),
+
+  /* 5) Обчислення «сировинних» χ²-квантілей:
+        розраховуємо m−1 квантильних точок за допомогою quantile_chi2 */
+  raw_q: makelist(quantile_chi2(i/m, df), i, 1, m-1),
+  print("Raw χ²-quantiles: ", raw_q),
+
+  /* 6) Масштабування квантилей у фактичний діапазон [min..max]:
+        перетворюємо raw_q із розподілу χ² у межі вашого ряду */
+  scale: (last(sorted_series) - first(sorted_series)) / last(raw_q),
+  bounds: append(
+    map(lambda([q], first(sorted_series) + q*scale), raw_q),
+    [ last(sorted_series) ]
+  ),
+  print("Scaled boundaries: ", bounds),
+
+  /* 7) Вивід інтервалів із прив’язкою до символів:
+        друкуємо кожний інтервал [prev, up] → буква алфавіту */
+  print("Intervals:"),
+  prev: first(sorted_series),
+  for j:1 thru m do block(
+    up: if j<m then bounds[j] else last(sorted_series),
+    print(
+      sconcat("  [", prev, ", ", up,
+              if j<m then ")" else "]",
+              " -> ", alphabet[j])
+    ),
+    prev: up
+  ),
+
+  /* 8) Мапінг кожного значення в символ:
+        для кожного v із series знаходимо, у який інтервал воно потрапляє */
+  letters: [],
+  for i:1 thru n do block(
+    v: series[i],
+    j: 1,
+    while j < m and v >= bounds[j] do j: j+1,
+    letters: endcons(alphabet[j], letters)
+  ),
+  print("Value -> Symbol:"),
+  for i:1 thru n do
+    print(sconcat("  ", series[i], " -> ", letters[i])),
+
+  /* 9) Побудова лінгвістичного ланцюжка:
+        конкатенуємо всі символи в один рядок */
+  chain: "",
+  for L in letters do chain: sconcat(chain, L),
+  print("Linguistic chain: ", chain),
+
+  /* 10) Побудова матриці переходів:
+         створюємо m×m нульову матрицю, потім рахуємо переходи */
+  mat: genmatrix(lambda([r,c],0), m, m),
+  L: length(letters),
+  for i:1 thru L-1 do block(
+    idx_i: 0, idx_j: 0,
+    for k:1 thru m do (
+      if letters[i] = alphabet[k] then idx_i: k,
+      if letters[i+1] = alphabet[k] then idx_j: k
+    ),
+    mat[idx_i, idx_j]: mat[idx_i, idx_j] + 1
+  ),
+
+  /* 11) Вивід матриці передування:
+        спочатку заголовок, потім кожний рядок із частотами */ 
+  print("Transition matrix:"),
+  print(append(["   "], alphabet)),
+  for i:1 thru m do print(append([alphabet[i]], mat[i])),
+
+  false  /* повернути FALSE, щоб не показувати зайвих результатів */
+)$

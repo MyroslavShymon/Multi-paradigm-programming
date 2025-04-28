@@ -1,0 +1,184 @@
+:- set_prolog_flag(encoding, utf8).
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% ЛАБОРАТОРНА РОБОТА №4 (варіант 4: Χі‑розподіл) на Prolog
+% Мова програмування: SWI‑Prolog
+%
+% Завдання: Реалізувати перетворення числового ряду до лінгвістичного ланцюжка,
+% де числовий ряд спочатку сортується, потім розбивається на інтервали згідно
+% з ймовірнісною моделлю (Χі‑розподіл для DF = 4), і кожному числу ставиться знак
+% з алфавіту (A, B, ...). Побудувати також матрицю передування (правила переходів).
+%
+% Програму запускаємо як базу фактів і правил. Результат виводиться у консоль.
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% --- Кумулятивна функція розподілу Χі (DF = 4) ---
+chisq_cdf(X, CDF) :-
+    X >= 0,
+    CDF is 1 - exp(-X/2) * (1 + X/2).
+
+% --- Обчислення квантиля для даної ймовірності P за методом бінарного пошуку ---
+chi_square_quantile(P, Q) :-
+    quantile_bs(P, 0, 100, Q).
+
+quantile_bs(P, Low, High, Q) :-
+    Mid is (Low + High) / 2,
+    chisq_cdf(Mid, CdfMid),
+    (   abs(CdfMid - P) < 0.0001
+    ->  Q = Mid
+    ;   ( CdfMid < P
+        ->  quantile_bs(P, Mid, High, Q)
+        ;   quantile_bs(P, Low, Mid, Q)
+        )
+    ).
+
+% --- Обчислення меж інтервалів ---
+% compute_boundaries(+Series, +M, -Boundaries)
+% Series - відсортований числовий ряд, M - потужність алфавіту
+compute_boundaries(Series, M, Boundaries) :-
+    min_list(Series, Min),
+    max_list(Series, Max),
+    chisq_cdf(Min, Pmin),
+    chisq_cdf(Max, Pmax),
+    Diff is (Pmax - Pmin) / M,
+    compute_boundaries_aux(0, M, Pmin, Diff, Boundaries).
+
+compute_boundaries_aux(I, M, _Pmin, _Diff, []) :-
+    I > M, !.
+compute_boundaries_aux(I, M, Pmin, Diff, [B|Bs]) :-
+    P is Pmin + I * Diff,
+    chi_square_quantile(P, B),
+    I1 is I + 1,
+    compute_boundaries_aux(I1, M, Pmin, Diff, Bs).
+
+% --- Призначення символу для заданого інтервалу ---
+% letter_for_index(+Index, -Letter)
+letter_for_index(Index, Letter) :-
+    Code is 64 + Index,  % 65 = ASCII-код 'A'
+    char_code(Letter, Code).
+
+% --- Перетворення числового значення на символ ---
+% numeric_to_letter(+Number, +Boundaries, +M, -Letter)
+numeric_to_letter(Number, Boundaries, M, Letter) :-
+    numeric_to_letter_aux(Number, Boundaries, 1, M, Index),
+    letter_for_index(Index, Letter).
+
+numeric_to_letter_aux(Number, [B1,B2|_], I, _M, I) :-
+    Number >= B1, Number < B2, !.
+numeric_to_letter_aux(Number, [_|Rest], I, M, Index) :-
+    I < M,
+    I1 is I + 1,
+    numeric_to_letter_aux(Number, Rest, I1, M, Index).
+numeric_to_letter_aux(_, [_], M, M, M).
+
+% --- Перетворення числового ряду у лінгвістичний ряд ---
+% transform_series(+Series, +Boundaries, +M, -LettersList)
+transform_series([], _Boundaries, _M, []).
+transform_series([H|T], Boundaries, M, [L|LT]) :-
+    numeric_to_letter(H, Boundaries, M, L),
+    transform_series(T, Boundaries, M, LT).
+
+% --- Побудова матриці передування (правил переходів) ---
+% Представляємо переходи як факти transition(From, To, Count).
+build_transitions(Ls, Transitions) :-
+    build_transitions_aux(Ls, [], Transitions).
+
+build_transitions_aux([_], Transitions, Transitions).
+build_transitions_aux([X, Y|T], Acc, Transitions) :-
+    update_transition(X, Y, Acc, NewAcc),
+    build_transitions_aux([Y|T], NewAcc, Transitions).
+
+update_transition(X, Y, Acc, NewAcc) :-
+    ( member(transition(X, Y, Count), Acc) ->
+         delete(Acc, transition(X, Y, Count), Rest),
+         Count1 is Count + 1,
+         NewTransition = transition(X, Y, Count1),
+         NewAcc = [NewTransition|Rest]
+    ; NewAcc = [transition(X, Y, 1)|Acc]
+    ).
+
+% --- Генерація числового ряду за Χі‑розподілом ---
+% Для df = 4: використовується наближення за допомогою суми двох експоненційних змінних.
+generate_chisq_series(N, Series) :-
+    findall(X, (between(1, N, _), random_chisq(4, X)), Series).
+
+random_chisq(4, X) :-
+    random(Random1),
+    random(Random2),
+    X is (-2 * log(Random1)) + (-2 * log(Random2)).
+
+% --- Отримання кількості переходу для пари символів ---
+get_count(Transitions, From, To, Count) :-
+    ( member(transition(From, To, C), Transitions) ->
+         Count = C
+    ; Count = 0 ).
+
+% --- Друк матриці передування у вигляді таблиці ---
+print_transition_matrix(Transitions, M) :-
+    % Створюємо список літер від A до останньої (наприклад, при m=23 - A...W)
+    findall(Letter, (between(1, M, I), letter_for_index(I, Letter)), Letters),
+    nl, write('Матриця передування (частота переходів):'), nl,
+    write('      '),
+    print_letters(Letters), nl,
+    print_matrix_rows(Letters, Letters, Transitions).
+
+print_letters([]).
+print_letters([H|T]) :-
+    format('~4w', [H]),
+    print_letters(T).
+
+print_matrix_rows([], _, _).
+print_matrix_rows([Row|RestRows], Cols, Transitions) :-
+    format('~4w: ', [Row]),
+    print_matrix_row(Row, Cols, Transitions),
+    nl,
+    print_matrix_rows(RestRows, Cols, Transitions).
+
+print_matrix_row(_, [], _).
+print_matrix_row(Row, [Col|RestCols], Transitions) :-
+    get_count(Transitions, Row, Col, Count),
+    format('~4d', [Count]),
+    print_matrix_row(Row, RestCols, Transitions).
+
+% --- Допоміжні предикати для друку ---
+% Друк числового ряду з форматуванням (2 знаки після десяткової крапки)
+print_series([]).
+print_series([H]) :-
+    format('~4.2f', [H]).
+print_series([H|T]) :-
+    format('~4.2f, ', [H]),
+    print_series(T).
+
+% Друк лінгвістичного ряду як одного рядка
+print_linguistic(Ls) :-
+    atomic_list_concat(Ls, '', String),
+    write(String).
+
+% --- Головна програма ---
+main :-
+    write('Введіть кількість елементів числового ряду (N): '), nl,
+    read(N),
+    ( integer(N), N > 0 -> true ; (write('Некоректне значення N.'), nl, halt) ),
+    write('Введіть розмір алфавіту (m, мінімум 2): '), nl,
+    read(M),
+    ( integer(M), M >= 2 -> true ; (write('Некоректний розмір алфавіту.'), nl, halt) ),
+    write('Введіть ряд чисел (як список), або введіть -1 для автогенерації (Χі‑розподіл): '), nl,
+    read(Input),
+    ( Input = -1
+      -> generate_chisq_series(N, Series)
+      ;  Series = Input
+    ),
+    sort(Series, Sorted),
+    nl, write('Відсортований числовий ряд:'), nl,
+    print_series(Sorted), nl,
+    compute_boundaries(Sorted, M, Boundaries),
+    transform_series(Sorted, Boundaries, M, Linguistic),
+    nl, write('Лінгвістичний ряд (послідовність символів):'), nl,
+    print_linguistic(Linguistic), nl,
+    build_transitions(Linguistic, Transitions),
+    print_transition_matrix(Transitions, M), nl,
+    write('Роботу завершено.'), nl.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Кінцева точка програми.
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
