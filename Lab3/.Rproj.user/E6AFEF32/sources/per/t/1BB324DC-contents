@@ -1,18 +1,14 @@
 # ЛАБОРАТОРНА РОБОТА №3 (Варіант 4: Χі-розподіл)
+# ----------------------------------------------
 
-# 1. Параметри розподілу(Число ступенів свободи для Χі-розподілу)
-# ----------------------
+# 1. Параметри розподілу
 df <- 4
 
-# 2. Генерація або зчитування вхідного числового ряду
-# ---------------------------------------------------
-# 2.1. Генерує n значень за Χі-розподілом або зчитує їх з консолі
+# 2. Генерація або зчитування числового ряду
 generate_series <- function(n, auto_gen = TRUE) {
   if (auto_gen) {
-    # 2.1.1. Автогенерація: rchisq
     series <- rchisq(n, df = df)
   } else {
-    # 2.1.2. Ручне введення: рядок пробілів → вектор чисел
     input_line <- readline(prompt = "Введіть числа, розділені пробілами: ")
     series <- as.numeric(unlist(strsplit(input_line, "\\s+")))
     if (length(series) != n) {
@@ -22,48 +18,38 @@ generate_series <- function(n, auto_gen = TRUE) {
   return(series)
 }
 
-
-# 3. Обчислення меж інтервалів за Χі-розподілом
-# --------------------------------------------
-# 3.1. Визначаємо функції розподілу та обернену функцію розподілу (pchisq / qchisq)
-# 3.2. Розбиваємо ймовірнісний інтервал [P(min), P(max)] на m частин
-# 3.3. За квантілями повертаємо границі
+# 3. Обчислення меж інтервалів через χ²-квантілі
 calc_boundaries <- function(series, m) {
-  series_min <- min(series)          # 3.4. Мінімум
-  series_max <- max(series)          # 3.5. Максимум
-  p_lower     <- pchisq(series_min, df = df)
-  p_upper     <- pchisq(series_max, df = df)
-  p_bounds    <- seq(p_lower, p_upper, length.out = m + 1)
-  boundaries  <- qchisq(p_bounds, df = df)
+  # Нормалізований ряд до [0, 1]
+  normalized <- (series - min(series)) / (max(series) - min(series))
+  
+  # Ймовірності на межах інтервалів (вже в нормалізованому просторі)
+  p_bounds <- seq(0, 1, length.out = m + 1)
+  
+  # Масштабуємо межі інтервалів через qchisq
+  boundaries <- qchisq(p_bounds, df = df)
+  
   return(boundaries)
 }
 
 
-# 4. Перетворення чисел у символи алфавіту
-# ----------------------------------------
-# 4.1. Для кожного x визначаємо індекс інтервалу через findInterval
-# 4.2. Корегуємо вихід за межами [1,m]
-# 4.3. Повертаємо вектор символів
+# 4. Перетворення чисел у літери
 numeric_to_letters <- function(series, boundaries, letters) {
   indices <- findInterval(series, boundaries, rightmost.closed = TRUE)
-  indices[indices < 1]             <- 1
+  indices[indices < 1] <- 1
   indices[indices > length(letters)] <- length(letters)
   linguistic <- letters[indices]
   return(linguistic)
 }
 
-
-# 5. Побудова матриці переходів (матриці передування)
-# ---------------------------------------------------
-# 5.1. Ініціалізація матриці нулями m×m
-# 5.2. Для кожного кроку i→i+1 інкрементуємо відповідну комірку
+# 5. Побудова матриці передування
 build_transition_matrix <- function(linguistic, m) {
   trans_matrix <- matrix(0, nrow = m, ncol = m)
   for (i in seq_len(length(linguistic) - 1)) {
-    from    <- linguistic[i]
-    to      <- linguistic[i + 1]
+    from <- linguistic[i]
+    to <- linguistic[i + 1]
     row_idx <- match(from, LETTERS)
-    col_idx <- match(to,   LETTERS)
+    col_idx <- match(to, LETTERS)
     if (!is.na(row_idx) && !is.na(col_idx)) {
       trans_matrix[row_idx, col_idx] <- trans_matrix[row_idx, col_idx] + 1
     }
@@ -71,53 +57,60 @@ build_transition_matrix <- function(linguistic, m) {
   return(trans_matrix)
 }
 
-
-# 6. Головна функція: зчитування, обробка, вивід
-# ---------------------------------------------
+# 6. Основна функція
 main <- function() {
-  # 6.1. Зчитуємо N та перевіряємо
-  n <- as.integer(readline(prompt = "Введіть кількість елементів чисельного ряду (N): "))
-  if (is.na(n) || n <= 0) stop("Некоректне значення N.")
+  use_file <- tolower(readline("Читати дані з файлу data.csv? (Y/N): ")) == "y"
   
-  # 6.2. Зчитуємо m (розмір алфавіту) та перевіряємо
-  m <- as.integer(readline(prompt = "Введіть розмір алфавіту (m, мінімум 2): "))
-  if (is.na(m) || m < 2) stop("Некоректний розмір алфавіту.")
+  if (use_file) {
+    if (!file.exists("data.csv")) stop("Файл data.csv не знайдено.")
+    data <- read.csv("data.csv", header = TRUE)
+    if (!"Price" %in% names(data)) stop("Колонка 'Price' відсутня у файлі.")
+    available <- length(data$Price)
+    cat(sprintf("У файлі доступно %d значень у колонці Price.\n", available))
+    n <- as.integer(readline("Скільки значень зчитати з файлу?: "))
+    if (is.na(n) || n <= 0 || n > available) stop("Некоректна кількість значень.")
+    series <- head(as.numeric(data$Price), n)
+  } else {
+    n <- as.integer(readline("Введіть кількість елементів чисельного ряду (N): "))
+    if (is.na(n) || n <= 0) stop("Некоректне значення N.")
+    auto_input <- readline("Введіть '-1' для автогенерації або '0' для ручного введення: ")
+    auto_gen <- identical(auto_input, "-1")
+    series <- generate_series(n, auto_gen)
+  }
   
-  # 6.3. Визначаємо, чи автогенерувати ряд
-  auto_input <- readline(prompt = "Введіть '-1' для автогенерації або '0' для ручного введення: ")
-  auto_gen    <- identical(auto_input, "-1")
+  series <- sort(series)
   
-  # 6.4. Генеруємо або зчитуємо ряд та сортуючи
-  series      <- sort(generate_series(n, auto_gen))
-  
-  # 6.5. Обчислюємо межі інтервалів
-  boundaries  <- calc_boundaries(series, m)
-  
-  # 6.6. Формуємо вектор перших m літер латинського алфавіту
+  m <- as.integer(readline("Введіть розмір алфавіту (m, мінімум 2): "))
+  if (is.na(m) || m < 2 || m > length(series)) stop("Некоректний розмір алфавіту.")
   letters_used <- LETTERS[1:m]
   
-  # 6.7. Перетворюємо числовий ряд у літерний
-  linguistic   <- numeric_to_letters(series, boundaries, letters_used)
+  boundaries <- calc_boundaries(series, m)
   
-  # 6.8. Будуємо матрицю передування
-  trans_matrix <- build_transition_matrix(linguistic, m)
+  # Масштабуємо series у простір χ²
+  normalized <- (series - min(series)) / (max(series) - min(series))
+  series_chi <- qchisq(normalized, df = df)
+  linguistic <- numeric_to_letters(series_chi, boundaries, letters_used)
+  matrix <- build_transition_matrix(linguistic, m)
   
-  # 6.9. Виводимо результати
   cat("\nВідсортований числовий ряд:\n")
   cat(sprintf("%.2f", series), sep = ", ", "\n")
   
-  cat("\nЛінгвістичний ряд (послідовність символів):\n")
+  cat("\nМежі інтервалів:\n")
+  for (i in 1:m) {
+    cat(sprintf("Інтервал %d: [%.2f, %.2f]\n", i, boundaries[i], boundaries[i + 1]))
+  }
+  
+  cat("\nЛінгвістичний ряд:\n")
   cat(paste(linguistic, collapse = ""), "\n")
   
-  cat("\nМатриця передування (частота переходів):\n")
+  cat("\nМатриця передування:\n")
   cat(sprintf("%6s", ""), paste(sprintf("%4s", letters_used), collapse = ""), "\n")
   for (i in seq_len(m)) {
-    cat(sprintf("%4s: ", letters_used[i]), paste(sprintf("%4d", trans_matrix[i, ]), collapse = ""), "\n")
+    cat(sprintf("%4s: ", letters_used[i]), paste(sprintf("%4d", matrix[i, ]), collapse = ""), "\n")
   }
   
   cat("\nРоботу завершено.\n")
 }
 
-# 7. Виклик головної функції
-# --------------------------
+# 7. Запуск
 main()
